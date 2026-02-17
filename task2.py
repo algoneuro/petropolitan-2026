@@ -3,7 +3,9 @@ import numpy as np
 
 def transform_season(input_path, output_path, target):
     """
-    target: 'summer' (осень→лето) или 'autumn' (лето→осень)
+    Преобразует сезон на изображении.
+    target: 'summer' – осень → лето,
+            'autumn' – лето → осень.
     """
     img = cv2.imread(input_path)
     if img is None:
@@ -13,25 +15,39 @@ def transform_season(input_path, output_path, target):
     h, s, v = cv2.split(hsv)
 
     if target == 'summer':  # осень -> лето
-        # маска для осенних тонов
-        mask1 = cv2.inRange(hsv, (10, 50, 50), (30, 255, 255))
-        mask2 = cv2.inRange(hsv, (80, 50, 50), (100, 255, 255))
+        # Маска для осенних тонов (красно-жёлтые)
+        mask1 = cv2.inRange(hsv, (0, 50, 50), (30, 255, 255))    # красные, оранжевые, жёлтые
+        mask2 = cv2.inRange(hsv, (80, 50, 50), (100, 255, 255))  # редко, но оставим
         mask = cv2.bitwise_or(mask1, mask2)
-        shift = -20
+        # Преобразование: отображаем осенний диапазон на летний (зелёный)
+        # Для простоты заменяем оттенок на среднее зелёное (около 60) с сохранением насыщенности и яркости
+        h_new = np.copy(h)
+        h_new = h_new.astype(np.int16)
+        # Для пикселей маски устанавливаем новый оттенок = 60 + небольшая вариация от исходного
+        # (чтобы сохранить естественное разнообразие)
+        variation = (h[mask > 0] - 40)  # пример, можно настроить
+        h_new[mask > 0] = np.clip(60 + variation, 35, 85)  # ограничиваем зелёным диапазоном
     else:  # лето -> осень
+        # Маска для летних тонов (зелёные)
         mask = cv2.inRange(hsv, (35, 50, 50), (85, 255, 255))
-        shift = 20
+        # Преобразование: отображаем зелёный диапазон на осенний (жёлто-красный)
+        # Используем линейное отображение: h из [35,85] -> в [10,30] (жёлтые) или [80,100] (красноватые)
+        # Разобьём на две части: первую половину зелёных в жёлтые, вторую – в красноватые
+        h_new = np.copy(h)
+        h_new = h_new.astype(np.int16)
+        green_pixels = h[mask > 0]
+        # Нормируем от 0 до 1 в зелёном диапазоне
+        t = (green_pixels - 35) / (85 - 35)
+        # Отображаем: t -> осенний диапазон
+        autumn_h = np.where(t < 0.5,
+                            10 + (t * 2) * (30 - 10),          # первая половина в [10,30]
+                            80 + ((t - 0.5) * 2) * (100 - 80)) # вторая половина в [80,100]
+        h_new[mask > 0] = autumn_h.astype(np.uint8)
 
-    # морфологическая обработка
-    kernel = np.ones((5,5), np.uint8)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+    # Применяем изменения только в маске
+    h = h_new.astype(np.uint8) % 180  # гарантируем диапазон 0-179
 
-    # сдвиг оттенка
-    h = h.astype(np.int16)
-    h = np.where(mask, (h + shift) % 180, h)
-    h = h.astype(np.uint8)
-
+    # Для летнего результата немного увеличим насыщенность
     if target == 'summer':
         s = np.where(mask, np.clip(s * 1.2, 0, 255), s).astype(np.uint8)
 
